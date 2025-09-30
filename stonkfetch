@@ -471,12 +471,12 @@ def main():
         description='stonkfetch - Display stock information with colored logo ASCII art',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-        Examples:
-          sfetch AAPL                      # Display with colored logo
-          stonkfetch TSLA --no-color-ascii     # Grayscale ASCII art
-          stonkfetch MSFT --no-logo            # Use fallback ASCII
-          stonkfetch GOOGL --ascii-width 50    # Custom width
-          stonkfetch AMZN --no-color           # Disable all colors
+Examples:
+sfetch AAPL                       Display with colored logo
+stonkfetch TSLA --no-color-ascii      Grayscale ASCII art
+stonkfetch MSFT --no-logo             Use fallback ASCII
+stonkfetch GOOGL --ascii-width 50     Custom width
+stonkfetch AMZN --no-color            Disable all colors
         """
     
     )
@@ -515,7 +515,7 @@ def main():
     parser.add_argument(
         '--version',
         action='version',
-        version='stonkfetch 1.0 - Now with colored ASCII art!'
+        version='stonkfetch 1.0' 
     )
 
     args = parser.parse_args()

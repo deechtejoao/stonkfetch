@@ -6,6 +6,8 @@ A command-line tool that fetches and displays stock information with beautiful c
 
 stonkfetch is a Python-based CLI utility that retrieves real-time stock market data from Yahoo Finance and displays it alongside a company logo rendered as ASCII art. The tool features colored ASCII logos (when PIL/Pillow is available), customizable display options, and comprehensive stock information including price, volume, market cap, and 52-week ranges.
 
+![preview](img/preview.jpg)
+
 ## Features
 
 - **Real-time stock data** from Yahoo Finance API
