@@ -16,10 +16,11 @@ try:
 except ImportError:
     HAS_PIL = False
 
+
 class ColorMapper:
     @staticmethod
     def rgb_to_ansi256(r: int, g: int, b: int) -> int:
-        
+        # Grayscale short-circuit
         if r == g == b:
             if r < 8:
                 return 16
@@ -34,38 +35,20 @@ class ColorMapper:
 
     @staticmethod
     def get_ansi_color_code(r: int, g: int, b: int, foreground: bool = True) -> str:
-        
         ansi_code = ColorMapper.rgb_to_ansi256(r, g, b)
         prefix = "38" if foreground else "48"
         return f"\033[{prefix};5;{ansi_code}m"
 
-    @staticmethod
-    def get_dominant_color(img: 'Image.Image') -> Tuple[int, int, int]:
-        
-        img_small = img.resize((50, 50))
-        if img_small.mode != 'RGB':
-            img_small = img_small.convert('RGB')
-
-        pixels = list(img_small.getdata())
-        r_avg = sum(p[0] for p in pixels) // len(pixels)
-        g_avg = sum(p[1] for p in pixels) // len(pixels)
-        b_avg = sum(p[2] for p in pixels) // len(pixels)
-        return (r_avg, g_avg, b_avg)
-
 
 class ASCIIGenerator:
-
     ASCII_CHARS = ["@", "#", "S", "%", "?", "*", "+", ";", ":", ",", "."]
-    ASCII_CHARS_DETAILED = ["@", "#", "S", "%", "?", "*", "+", ";", ":", ",", ".", " "]
 
     @staticmethod
     def image_to_ascii_colored(
         image_data: bytes,
         width: int = 40,
-        detailed: bool = False,
         colored: bool = True
     ) -> List[str]:
-        
         if not HAS_PIL:
             return []
 
@@ -84,16 +67,17 @@ class ASCIIGenerator:
             img_gray = img_resized.convert('L')
             gray_pixels = list(img_gray.getdata())
 
-            chars = ASCIIGenerator.ASCII_CHARS_DETAILED if detailed else ASCIIGenerator.ASCII_CHARS
             ascii_lines = []
             reset_code = "\033[0m"
+            chars = ASCIIGenerator.ASCII_CHARS
+            step = max(1, 256 // len(chars))
 
             for row in range(new_height):
                 line = ""
                 for col in range(width):
                     idx = row * width + col
                     gray_val = gray_pixels[idx]
-                    char_index = min(len(chars) - 1, gray_val // (256 // len(chars)))
+                    char_index = min(len(chars) - 1, gray_val // step)
                     char = chars[char_index]
 
                     if colored:
@@ -110,39 +94,11 @@ class ASCIIGenerator:
             print(f"Error converting image to ASCII: {e}", file=sys.stderr)
             return []
 
-    @staticmethod
-    def get_fallback_ascii(symbol: str, color: Optional[str] = None) -> List[str]:
-        
-        colors = {
-            'cyan': '\033[96m',
-            'green': '\033[92m',
-            'yellow': '\033[93m',
-            'blue': '\033[94m',
-            'magenta': '\033[95m',
-            'red': '\033[91m',
-            'reset': '\033[0m'
-        }
-
-        c = colors.get(color, '') if color else ''
-        r = colors['reset'] if color else ''
-
-        return [
-                ""
-        ]
-
 
 class LogoFetcher:
     LOGO_SOURCES = [
-        {
-            'name': 'Clearbit',
-            'url_template': 'https://logo.clearbit.com/{domain}',
-            'requires_domain': True
-        },
-        {
-            'name': 'UpLead',
-            'url_template': 'https://logo.uplead.com/{domain}',
-            'requires_domain': True
-        }
+        {'name': 'Clearbit', 'url_template': 'https://logo.clearbit.com/{domain}'},
+        {'name': 'UpLead',   'url_template': 'https://logo.uplead.com/{domain}'},
     ]
 
     @staticmethod
@@ -219,7 +175,6 @@ class LogoFetcher:
 
     @staticmethod
     def fetch_logo(symbol: str, company_name: str) -> Optional[bytes]:
-        
         domain = LogoFetcher.get_company_domain(symbol, company_name)
         if not domain:
             return None
@@ -230,7 +185,6 @@ class LogoFetcher:
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
                 }
-
                 req = Request(url, headers=headers)
                 with urlopen(req, timeout=5) as response:
                     if response.status == 200:
@@ -242,7 +196,6 @@ class LogoFetcher:
 
 
 class stonkfetch:
-
     COLORS = {
         'reset': '\033[0m',
         'bold': '\033[1m',
@@ -272,20 +225,17 @@ class stonkfetch:
         self.ascii_art: List[str] = []
 
     def _colorize(self, text: str, color: str) -> str:
-        
         if self.no_color:
             return text
         return f"{self.COLORS.get(color, '')}{text}{self.COLORS['reset']}"
 
     def _fetch_data(self) -> bool:
-        
         try:
             base_url = "https://query1.finance.yahoo.com/v8/finance/chart/"
             url = f"{base_url}{self.symbol}?interval=1d&range=5d"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
             }
-
             req = Request(url, headers=headers)
             with urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode())
@@ -310,7 +260,6 @@ class stonkfetch:
             latest_idx = len(close_prices) - 1
             while latest_idx >= 0 and close_prices[latest_idx] is None:
                 latest_idx -= 1
-
             if latest_idx < 0:
                 return False
 
@@ -337,44 +286,38 @@ class stonkfetch:
                 'fifty_two_week_low': meta.get('fiftyTwoWeekLow'),
                 'timestamp': timestamps[latest_idx] if timestamps else None,
             }
-
             return True
         except (URLError, HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
             print(f"Error fetching data: {e}", file=sys.stderr)
             return False
 
     def _generate_ascii_art(self) -> None:
-        
+        # If logo is disabled or Pillow is unavailable, render info-only view
         if self.no_logo or not HAS_PIL:
             if not HAS_PIL and not self.no_logo:
-                print("Note: PIL/Pillow not installed. Using fallback ASCII art.", file=sys.stderr)
-
-            fallback_color = 'cyan' if not self.no_color else None
-            self.ascii_art = ASCIIGenerator.get_fallback_ascii(self.symbol, fallback_color)
+                print("Note: PIL/Pillow not installed. Proceeding without logo ASCII art.", file=sys.stderr)
+            self.ascii_art = []
             return
 
-        logo_data = LogoFetcher.fetch_logo(self.symbol, self.data.get('name', ''))
-
+        # Try fetching and rendering the logo
+        company_name = self.data.get('name', '') if self.data else ''
+        logo_data = LogoFetcher.fetch_logo(self.symbol, company_name)
         if logo_data:
             ascii_lines = ASCIIGenerator.image_to_ascii_colored(
                 logo_data,
-                self.ascii_width,
-                detailed=False,
+                width=self.ascii_width,
                 colored=self.colored_ascii
             )
-
             if ascii_lines:
                 self.ascii_art = ascii_lines
                 return
 
-        fallback_color = 'cyan' if not self.no_color else None
-        self.ascii_art = ASCIIGenerator.get_fallback_ascii(self.symbol, fallback_color)
+        # Fallback to info-only if logo missing or conversion failed
+        self.ascii_art = []
 
     def _format_number(self, num: Optional[float], decimals: int = 2) -> str:
-        
         if num is None:
             return "N/A"
-
         if abs(num) >= 1_000_000_000:
             return f"{num / 1_000_000_000:.{decimals}f}B"
         elif abs(num) >= 1_000_000:
@@ -385,32 +328,26 @@ class stonkfetch:
             return f"{num:.{decimals}f}"
 
     def _format_price(self, price: Optional[float]) -> str:
-        
         if price is None:
             return "N/A"
         currency_symbol = "$" if self.data['currency'] == "USD" else self.data['currency']
         return f"{currency_symbol}{price:.2f}"
 
     def _get_change_info(self) -> Tuple[float, float, str]:
-        
         if not self.data:
             return 0.0, 0.0, 'white'
-
         current = self.data.get('current_price', 0)
         previous = self.data.get('previous_close', current)
         change = current - previous
         pct_change = (change / previous * 100) if previous else 0
         color = 'green' if change > 0 else 'red' if change < 0 else 'white'
-
         return change, pct_change, color
 
     def _strip_ansi(self, text: str) -> str:
-        
         ansi_escape = re.compile(r'\033\[[0-9;]*m')
         return ansi_escape.sub('', text)
 
     def display(self) -> None:
-        
         if not self._fetch_data() or not self.data:
             print(f"Error: Could not fetch data for symbol '{self.symbol}'", file=sys.stderr)
             sys.exit(1)
@@ -460,25 +397,23 @@ class stonkfetch:
             info_part = info_lines[i] if i < len(info_lines) else ""
 
             actual_width = len(self._strip_ansi(ascii_part))
-            padding = " " * (ascii_width - actual_width + 4)
+            padding = " " * (ascii_width - actual_width + 4 if ascii_width >= actual_width else 4)
             print(f"{ascii_part}{padding}{info_part}")
         print()
 
 
 def main():
-    
     parser = argparse.ArgumentParser(
         description='stonkfetch - Display stock information with colored logo ASCII art',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-sfetch AAPL                       Display with colored logo
+stonkfetch AAPL                       Display with colored logo
 stonkfetch TSLA --no-color-ascii      Grayscale ASCII art
 stonkfetch MSFT --no-logo             Use fallback ASCII
 stonkfetch GOOGL --ascii-width 50     Custom width
 stonkfetch AMZN --no-color            Disable all colors
         """
-    
     )
 
     parser.add_argument(
@@ -502,7 +437,7 @@ stonkfetch AMZN --no-color            Disable all colors
     parser.add_argument(
         '--no-logo',
         action='store_true',
-        help='Disable logo fetching and use fallback ASCII art'
+        help='Disable logo fetching and use info-only view'
     )
 
     parser.add_argument(
@@ -515,11 +450,10 @@ stonkfetch AMZN --no-color            Disable all colors
     parser.add_argument(
         '--version',
         action='version',
-        version='stonkfetch 1.0' 
+        version='stonkfetch 1.0'
     )
 
     args = parser.parse_args()
-
     colored_ascii = not args.no_color_ascii and not args.no_color
 
     fetcher = stonkfetch(
