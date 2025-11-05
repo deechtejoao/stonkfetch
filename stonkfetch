@@ -16,6 +16,9 @@ try:
 except ImportError:
     HAS_PIL = False
 
+# Compile regex once at module level for performance
+_ANSI_ESCAPE = re.compile(r'\033\[[0-9;]*m')
+
 
 class ColorMapper:
     @staticmethod
@@ -64,30 +67,30 @@ class ASCIIGenerator:
             img_resized = img.resize((width, new_height))
             rgb_pixels = list(img_resized.getdata())
 
-            img_gray = img_resized.convert('L')
-            gray_pixels = list(img_gray.getdata())
-
-            ascii_lines = []
-            reset_code = "\033[0m"
+            # Compute grayscale luminance directly from RGB to avoid extra conversion
+            # Standard ITU-R BT.601 luminance formula: 0.299*R + 0.587*G + 0.114*B
             chars = ASCIIGenerator.ASCII_CHARS
             step = max(1, 256 // len(chars))
+            reset_code = "\033[0m" if colored else ""
 
+            ascii_lines = []
             for row in range(new_height):
-                line = ""
+                line_parts = []
                 for col in range(width):
                     idx = row * width + col
-                    gray_val = gray_pixels[idx]
+                    r, g, b = rgb_pixels[idx]
+                    # Compute grayscale luminance inline
+                    gray_val = int(0.299 * r + 0.587 * g + 0.114 * b)
                     char_index = min(len(chars) - 1, gray_val // step)
                     char = chars[char_index]
 
                     if colored:
-                        r, g, b = rgb_pixels[idx]
                         color_code = ColorMapper.get_ansi_color_code(r, g, b)
-                        line += f"{color_code}{char}{reset_code}"
+                        line_parts.append(f"{color_code}{char}{reset_code}")
                     else:
-                        line += char
+                        line_parts.append(char)
 
-                ascii_lines.append(line)
+                ascii_lines.append("".join(line_parts))
 
             return ascii_lines
         except Exception as e:
@@ -101,68 +104,70 @@ class LogoFetcher:
         {'name': 'UpLead',   'url_template': 'https://logo.uplead.com/{domain}'},
     ]
 
+    # Pre-normalize domain map keys to uppercase for O(1) lookup
+    _DOMAIN_MAP = {
+        'AAPL': 'apple.com',
+        'MSFT': 'microsoft.com',
+        'GOOGL': 'google.com',
+        'GOOG': 'google.com',
+        'AMZN': 'amazon.com',
+        'META': 'meta.com',
+        'TSLA': 'tesla.com',
+        'NVDA': 'nvidia.com',
+        'JPM': 'jpmorganchase.com',
+        'V': 'visa.com',
+        'WMT': 'walmart.com',
+        'DIS': 'disney.com',
+        'MA': 'mastercard.com',
+        'NFLX': 'netflix.com',
+        'PYPL': 'paypal.com',
+        'INTC': 'intel.com',
+        'CSCO': 'cisco.com',
+        'ADBE': 'adobe.com',
+        'CRM': 'salesforce.com',
+        'NKE': 'nike.com',
+        'PFE': 'pfizer.com',
+        'KO': 'coca-cola.com',
+        'PEP': 'pepsi.com',
+        'MCD': 'mcdonalds.com',
+        'BA': 'boeing.com',
+        'IBM': 'ibm.com',
+        'ORCL': 'oracle.com',
+        'AMD': 'amd.com',
+        'QCOM': 'qualcomm.com',
+        'TXN': 'ti.com',
+        'SBUX': 'starbucks.com',
+        'T': 'att.com',
+        'VZ': 'verizon.com',
+        'GM': 'gm.com',
+        'F': 'ford.com',
+        'GE': 'ge.com',
+        'CAT': 'caterpillar.com',
+        'UBER': 'uber.com',
+        'LYFT': 'lyft.com',
+        'SNAP': 'snap.com',
+        'SPOT': 'spotify.com',
+        'SQ': 'squareup.com',
+        'SHOP': 'shopify.com',
+        'ZM': 'zoom.us',
+        'DOCU': 'docusign.com',
+        'NOW': 'servicenow.com',
+        'SNOW': 'snowflake.com',
+        'CRWD': 'crowdstrike.com',
+        'PANW': 'paloaltonetworks.com',
+        'ABNB': 'airbnb.com',
+        'COIN': 'coinbase.com',
+        'RBLX': 'roblox.com',
+        'U': 'unity.com',
+        'DDOG': 'datadoghq.com',
+        'NET': 'cloudflare.com',
+    }
+
     @staticmethod
     def get_company_domain(symbol: str, company_name: str) -> Optional[str]:
-        domain_map = {
-            'AAPL': 'apple.com',
-            'MSFT': 'microsoft.com',
-            'GOOGL': 'google.com',
-            'GOOG': 'google.com',
-            'AMZN': 'amazon.com',
-            'META': 'meta.com',
-            'TSLA': 'tesla.com',
-            'NVDA': 'nvidia.com',
-            'JPM': 'jpmorganchase.com',
-            'V': 'visa.com',
-            'WMT': 'walmart.com',
-            'DIS': 'disney.com',
-            'MA': 'mastercard.com',
-            'NFLX': 'netflix.com',
-            'PYPL': 'paypal.com',
-            'INTC': 'intel.com',
-            'CSCO': 'cisco.com',
-            'ADBE': 'adobe.com',
-            'CRM': 'salesforce.com',
-            'NKE': 'nike.com',
-            'PFE': 'pfizer.com',
-            'KO': 'coca-cola.com',
-            'PEP': 'pepsi.com',
-            'MCD': 'mcdonalds.com',
-            'BA': 'boeing.com',
-            'IBM': 'ibm.com',
-            'ORCL': 'oracle.com',
-            'AMD': 'amd.com',
-            'QCOM': 'qualcomm.com',
-            'TXN': 'ti.com',
-            'SBUX': 'starbucks.com',
-            'T': 'att.com',
-            'VZ': 'verizon.com',
-            'GM': 'gm.com',
-            'F': 'ford.com',
-            'GE': 'ge.com',
-            'CAT': 'caterpillar.com',
-            'UBER': 'uber.com',
-            'LYFT': 'lyft.com',
-            'SNAP': 'snap.com',
-            'SPOT': 'spotify.com',
-            'SQ': 'squareup.com',
-            'SHOP': 'shopify.com',
-            'ZM': 'zoom.us',
-            'DOCU': 'docusign.com',
-            'NOW': 'servicenow.com',
-            'SNOW': 'snowflake.com',
-            'CRWD': 'crowdstrike.com',
-            'PANW': 'paloaltonetworks.com',
-            'ABNB': 'airbnb.com',
-            'COIN': 'coinbase.com',
-            'RBLX': 'roblox.com',
-            'U': 'unity.com',
-            'DDOG': 'datadoghq.com',
-            'NET': 'cloudflare.com',
-        }
-
-        if symbol.upper() in domain_map:
-            return domain_map[symbol.upper()]
+        symbol_upper = symbol.upper()
+        if symbol_upper in LogoFetcher._DOMAIN_MAP:
+            return LogoFetcher._DOMAIN_MAP[symbol_upper]
 
         if company_name and company_name != 'N/A':
             name_parts = company_name.lower().split()
@@ -227,7 +232,9 @@ class stonkfetch:
     def _colorize(self, text: str, color: str) -> str:
         if self.no_color:
             return text
-        return f"{self.COLORS.get(color, '')}{text}{self.COLORS['reset']}"
+        color_code = self.COLORS.get(color, '')
+        reset_code = self.COLORS['reset']
+        return f"{color_code}{text}{reset_code}"
 
     def _fetch_data(self) -> bool:
         try:
@@ -344,8 +351,7 @@ class stonkfetch:
         return change, pct_change, color
 
     def _strip_ansi(self, text: str) -> str:
-        ansi_escape = re.compile(r'\033\[[0-9;]*m')
-        return ansi_escape.sub('', text)
+        return _ANSI_ESCAPE.sub('', text)
 
     def display(self) -> None:
         if not self._fetch_data() or not self.data:
@@ -389,14 +395,16 @@ class stonkfetch:
             info_lines.append(f"{self._colorize('Updated:', 'white')} {dt.strftime('%Y-%m-%d %H:%M:%S')}")
 
         max_lines = max(len(self.ascii_art), len(info_lines))
-        ascii_width = max(len(self._strip_ansi(line)) for line in self.ascii_art) if self.ascii_art else 0
+        # Cache stripped ASCII lines to avoid redundant regex operations
+        stripped_ascii = [self._strip_ansi(line) for line in self.ascii_art] if self.ascii_art else []
+        ascii_width = max(len(line) for line in stripped_ascii) if stripped_ascii else 0
 
         print()
         for i in range(max_lines):
             ascii_part = self.ascii_art[i] if i < len(self.ascii_art) else ""
             info_part = info_lines[i] if i < len(info_lines) else ""
 
-            actual_width = len(self._strip_ansi(ascii_part))
+            actual_width = len(stripped_ascii[i]) if i < len(stripped_ascii) else 0
             padding = " " * (ascii_width - actual_width + 4 if ascii_width >= actual_width else 4)
             print(f"{ascii_part}{padding}{info_part}")
         print()
