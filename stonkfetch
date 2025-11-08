@@ -4,6 +4,8 @@ import argparse
 import sys
 import json
 import re
+import time
+import signal
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from datetime import datetime
@@ -353,10 +355,21 @@ class stonkfetch:
     def _strip_ansi(self, text: str) -> str:
         return _ANSI_ESCAPE.sub('', text)
 
-    def display(self) -> None:
+    def _clear_screen(self) -> None:
+        """Clear the screen using ANSI escape codes."""
+        print("\033[2J\033[H", end="")
+
+    def display(self, clear_screen: bool = False, exit_on_error: bool = True) -> bool:
+        """Display stock information. Returns True on success, False on error."""
         if not self._fetch_data() or not self.data:
-            print(f"Error: Could not fetch data for symbol '{self.symbol}'", file=sys.stderr)
-            sys.exit(1)
+            error_msg = f"Error: Could not fetch data for symbol '{self.symbol}'"
+            print(error_msg, file=sys.stderr)
+            if exit_on_error:
+                sys.exit(1)
+            return False
+
+        if clear_screen:
+            self._clear_screen()
 
         self._generate_ascii_art()
 
@@ -408,6 +421,47 @@ class stonkfetch:
             padding = " " * (ascii_width - actual_width + 4 if ascii_width >= actual_width else 4)
             print(f"{ascii_part}{padding}{info_part}")
         print()
+        return True
+
+    def watch(self, interval: int) -> None:
+        """Continuously update and display stock information at specified intervals."""
+        # Set up signal handler for graceful exit on Ctrl+C
+        interrupted = False
+
+        def signal_handler(signum, frame):
+            nonlocal interrupted
+            interrupted = True
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+        # Hide cursor for cleaner display
+        print("\033[?25l", end="")
+
+        try:
+            while not interrupted:
+                try:
+                    # Display with error handling (don't exit on error in watch mode)
+                    success = self.display(clear_screen=True, exit_on_error=False)
+                    if not success and not interrupted:
+                        time.sleep(interval)
+                        continue
+                except Exception as e:
+                    # Log error but continue watching
+                    print(f"Error during update: {e}", file=sys.stderr)
+                    if not interrupted:
+                        time.sleep(interval)
+                    continue
+
+                if not interrupted:
+                    time.sleep(interval)
+
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Restore cursor and clear any remaining output
+            print("\033[?25h", end="")  # Show cursor
+            print()
 
 
 def main():
@@ -421,6 +475,7 @@ stonkfetch TSLA --no-color-ascii      Grayscale ASCII art
 stonkfetch MSFT --no-logo             Use fallback ASCII
 stonkfetch GOOGL --ascii-width 50     Custom width
 stonkfetch AMZN --no-color            Disable all colors
+stonkfetch AAPL --watch 5             Update every 5 seconds
         """
     )
 
@@ -456,13 +511,26 @@ stonkfetch AMZN --no-color            Disable all colors
     )
 
     parser.add_argument(
+        '--watch',
+        type=int,
+        metavar='SECONDS',
+        help='Continuously update display every SECONDS (e.g., --watch 5 for 5-second updates). Press Ctrl+C to exit.'
+    )
+
+    parser.add_argument(
         '--version',
         action='version',
-        version='stonkfetch 1.0'
+        version='stonkfetch 1.2'
     )
 
     args = parser.parse_args()
     colored_ascii = not args.no_color_ascii and not args.no_color
+
+    # Validate watch interval if provided
+    if args.watch is not None:
+        if args.watch < 1:
+            print("Error: Watch interval must be at least 1 second", file=sys.stderr)
+            sys.exit(1)
 
     fetcher = stonkfetch(
         args.symbol,
@@ -472,7 +540,10 @@ stonkfetch AMZN --no-color            Disable all colors
         colored_ascii=colored_ascii
     )
 
-    fetcher.display()
+    if args.watch is not None:
+        fetcher.watch(args.watch)
+    else:
+        fetcher.display()
 
 
 if __name__ == "__main__":
