@@ -18,14 +18,20 @@ try:
 except ImportError:
     HAS_PIL = False
 
-# Compile regex once at module level for performance
 _ANSI_ESCAPE = re.compile(r'\033\[[0-9;]*m')
+
+# Constants
+_ASCII_ASPECT_RATIO = 0.55
+_LUMINANCE_R = 0.299
+_LUMINANCE_G = 0.587
+_LUMINANCE_B = 0.114
+_REQUEST_TIMEOUT = 10
+_LOGO_TIMEOUT = 5
 
 
 class ColorMapper:
     @staticmethod
     def rgb_to_ansi256(r: int, g: int, b: int) -> int:
-        # Grayscale short-circuit
         if r == g == b:
             if r < 8:
                 return 16
@@ -64,13 +70,11 @@ class ASCIIGenerator:
 
             original_width, original_height = img.size
             aspect_ratio = original_height / original_width
-            new_height = int(width * aspect_ratio * 0.55)
+            new_height = int(width * aspect_ratio * _ASCII_ASPECT_RATIO)
 
             img_resized = img.resize((width, new_height))
             rgb_pixels = list(img_resized.getdata())
 
-            # Compute grayscale luminance directly from RGB to avoid extra conversion
-            # Standard ITU-R BT.601 luminance formula: 0.299*R + 0.587*G + 0.114*B
             chars = ASCIIGenerator.ASCII_CHARS
             step = max(1, 256 // len(chars))
             reset_code = "\033[0m" if colored else ""
@@ -81,8 +85,7 @@ class ASCIIGenerator:
                 for col in range(width):
                     idx = row * width + col
                     r, g, b = rgb_pixels[idx]
-                    # Compute grayscale luminance inline
-                    gray_val = int(0.299 * r + 0.587 * g + 0.114 * b)
+                    gray_val = int(_LUMINANCE_R * r + _LUMINANCE_G * g + _LUMINANCE_B * b)
                     char_index = min(len(chars) - 1, gray_val // step)
                     char = chars[char_index]
 
@@ -106,7 +109,6 @@ class LogoFetcher:
         {'name': 'UpLead',   'url_template': 'https://logo.uplead.com/{domain}'},
     ]
 
-    # Pre-normalize domain map keys to uppercase for O(1) lookup
     _DOMAIN_MAP = {
         'AAPL': 'apple.com',
         'MSFT': 'microsoft.com',
@@ -193,7 +195,7 @@ class LogoFetcher:
                     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
                 }
                 req = Request(url, headers=headers)
-                with urlopen(req, timeout=5) as response:
+                with urlopen(req, timeout=_LOGO_TIMEOUT) as response:
                     if response.status == 200:
                         return response.read()
             except (URLError, HTTPError):
@@ -246,7 +248,7 @@ class stonkfetch:
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
             }
             req = Request(url, headers=headers)
-            with urlopen(req, timeout=10) as response:
+            with urlopen(req, timeout=_REQUEST_TIMEOUT) as response:
                 data = json.loads(response.read().decode())
 
             if 'chart' not in data or 'result' not in data['chart']:
@@ -301,14 +303,12 @@ class stonkfetch:
             return False
 
     def _generate_ascii_art(self) -> None:
-        # If logo is disabled or Pillow is unavailable, render info-only view
         if self.no_logo or not HAS_PIL:
             if not HAS_PIL and not self.no_logo:
                 print("Note: PIL/Pillow not installed. Proceeding without logo ASCII art.", file=sys.stderr)
             self.ascii_art = []
             return
 
-        # Try fetching and rendering the logo
         company_name = self.data.get('name', '') if self.data else ''
         logo_data = LogoFetcher.fetch_logo(self.symbol, company_name)
         if logo_data:
@@ -321,7 +321,6 @@ class stonkfetch:
                 self.ascii_art = ascii_lines
                 return
 
-        # Fallback to info-only if logo missing or conversion failed
         self.ascii_art = []
 
     def _format_number(self, num: Optional[float], decimals: int = 2) -> str:
@@ -356,23 +355,9 @@ class stonkfetch:
         return _ANSI_ESCAPE.sub('', text)
 
     def _clear_screen(self) -> None:
-        """Clear the screen using ANSI escape codes."""
         print("\033[2J\033[H", end="")
 
-    def display(self, clear_screen: bool = False, exit_on_error: bool = True) -> bool:
-        """Display stock information. Returns True on success, False on error."""
-        if not self._fetch_data() or not self.data:
-            error_msg = f"Error: Could not fetch data for symbol '{self.symbol}'"
-            print(error_msg, file=sys.stderr)
-            if exit_on_error:
-                sys.exit(1)
-            return False
-
-        if clear_screen:
-            self._clear_screen()
-
-        self._generate_ascii_art()
-
+    def _build_info_lines(self) -> List[str]:
         change, pct_change, change_color = self._get_change_info()
         change_symbol = "▲" if change > 0 else "▼" if change < 0 else "●"
 
@@ -407,8 +392,10 @@ class stonkfetch:
             dt = datetime.fromtimestamp(self.data['timestamp'])
             info_lines.append(f"{self._colorize('Updated:', 'white')} {dt.strftime('%Y-%m-%d %H:%M:%S')}")
 
+        return info_lines
+
+    def _render_output(self, info_lines: List[str]) -> None:
         max_lines = max(len(self.ascii_art), len(info_lines))
-        # Cache stripped ASCII lines to avoid redundant regex operations
         stripped_ascii = [self._strip_ansi(line) for line in self.ascii_art] if self.ascii_art else []
         ascii_width = max(len(line) for line in stripped_ascii) if stripped_ascii else 0
 
@@ -421,11 +408,24 @@ class stonkfetch:
             padding = " " * (ascii_width - actual_width + 4 if ascii_width >= actual_width else 4)
             print(f"{ascii_part}{padding}{info_part}")
         print()
+
+    def display(self, clear_screen: bool = False, exit_on_error: bool = True) -> bool:
+        if not self._fetch_data() or not self.data:
+            error_msg = f"Error: Could not fetch data for symbol '{self.symbol}'"
+            print(error_msg, file=sys.stderr)
+            if exit_on_error:
+                sys.exit(1)
+            return False
+
+        if clear_screen:
+            self._clear_screen()
+
+        self._generate_ascii_art()
+        info_lines = self._build_info_lines()
+        self._render_output(info_lines)
         return True
 
     def watch(self, interval: int) -> None:
-        """Continuously update and display stock information at specified intervals."""
-        # Set up signal handler for graceful exit on Ctrl+C
         interrupted = False
 
         def signal_handler(signum, frame):
@@ -435,19 +435,16 @@ class stonkfetch:
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        # Hide cursor for cleaner display
         print("\033[?25l", end="")
 
         try:
             while not interrupted:
                 try:
-                    # Display with error handling (don't exit on error in watch mode)
                     success = self.display(clear_screen=True, exit_on_error=False)
                     if not success and not interrupted:
                         time.sleep(interval)
                         continue
                 except Exception as e:
-                    # Log error but continue watching
                     print(f"Error during update: {e}", file=sys.stderr)
                     if not interrupted:
                         time.sleep(interval)
@@ -459,8 +456,7 @@ class stonkfetch:
         except KeyboardInterrupt:
             pass
         finally:
-            # Restore cursor and clear any remaining output
-            print("\033[?25h", end="")  # Show cursor
+            print("\033[?25h", end="")
             print()
 
 
@@ -526,11 +522,9 @@ stonkfetch AAPL --watch 5             Update every 5 seconds
     args = parser.parse_args()
     colored_ascii = not args.no_color_ascii and not args.no_color
 
-    # Validate watch interval if provided
-    if args.watch is not None:
-        if args.watch < 1:
-            print("Error: Watch interval must be at least 1 second", file=sys.stderr)
-            sys.exit(1)
+    if args.watch is not None and args.watch < 1:
+        print("Error: Watch interval must be at least 1 second", file=sys.stderr)
+        sys.exit(1)
 
     fetcher = stonkfetch(
         args.symbol,
